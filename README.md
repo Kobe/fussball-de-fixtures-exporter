@@ -33,6 +33,25 @@ Die Ergebnisse landen im Ausgabeverzeichnis (`out/` per Default):
 
 Zusätzlich wird der Spielplan auf der Konsole ausgegeben.
 
+## Kalender-Abo über GitHub Pages
+
+Der Workflow [`publish-ics.yml`](.github/workflows/publish-ics.yml) ruft
+den Spielplan alle sechs Stunden ab und veröffentlicht ihn über GitHub
+Pages. Den Kalender kann man dann in Google Kalender, Apple Kalender
+oder Outlook als Abo hinzufügen:
+
+```
+https://kobe.github.io/fussball-de-fixtures-exporter/fixtures.ics
+```
+
+Auf der Seite <https://kobe.github.io/fussball-de-fixtures-exporter/>
+gibt es außerdem einen Webcal-Link sowie JSON- und CSV-Downloads.
+
+**Einmalige Einrichtung:** In den Repo-Einstellungen unter
+*Settings → Pages* als Source **GitHub Actions** auswählen. Danach den
+Workflow einmal manuell starten (*Actions → Publish ICS to GitHub
+Pages → Run workflow*) oder auf den nächsten automatischen Lauf warten.
+
 ## Hinweise
 
 - Zukünftige Spiele zeigen als Ergebnis `-:-`.

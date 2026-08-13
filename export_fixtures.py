@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import sys
@@ -175,15 +176,42 @@ def _ics_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;")
 
 
-def write_ics(fixtures: list[Fixture], path: Path) -> None:
+# Minimal VTIMEZONE so calendar clients resolve TZID=Europe/Berlin offline.
+VTIMEZONE = [
+    "BEGIN:VTIMEZONE",
+    "TZID:Europe/Berlin",
+    "BEGIN:DAYLIGHT",
+    "TZOFFSETFROM:+0100",
+    "TZOFFSETTO:+0200",
+    "TZNAME:CEST",
+    "DTSTART:19700329T020000",
+    "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+    "END:DAYLIGHT",
+    "BEGIN:STANDARD",
+    "TZOFFSETFROM:+0200",
+    "TZOFFSETTO:+0100",
+    "TZNAME:CET",
+    "DTSTART:19701025T030000",
+    "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
+    "END:STANDARD",
+    "END:VTIMEZONE",
+]
+
+
+def write_ics(fixtures: list[Fixture], path: Path, cal_name: str) -> None:
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//fussball-de-fixtures-exporter//DE",
         "CALSCALE:GREGORIAN",
+        f"X-WR-CALNAME:{_ics_escape(cal_name)}",
+        "X-WR-TIMEZONE:Europe/Berlin",
+        "REFRESH-INTERVAL;VALUE=DURATION:PT6H",
+        "X-PUBLISHED-TTL:PT6H",
+        *VTIMEZONE,
     ]
     stamp = datetime.now(tz=ZoneInfo("UTC")).strftime("%Y%m%dT%H%M%SZ")
-    for i, f in enumerate(fixtures):
+    for f in fixtures:
         if not (f.date and f.home and f.away):
             continue
         time_part = f.time or "00:00"
@@ -192,9 +220,14 @@ def write_ics(fixtures: list[Fixture], path: Path) -> None:
         summary = f"{f.home} vs. {f.away}"
         if f.score and f.score != "-:-":
             summary += f" ({f.score})"
+        # UID must stay stable across runs so subscribed clients update
+        # events in place instead of duplicating them.
+        uid_hash = hashlib.sha1(
+            f"{f.date}|{f.home}|{f.away}".encode()
+        ).hexdigest()[:16]
         lines += [
             "BEGIN:VEVENT",
-            f"UID:{f.date}-{i}@fussball-de-fixtures-exporter",
+            f"UID:{uid_hash}@fussball-de-fixtures-exporter",
             f"DTSTAMP:{stamp}",
             f"DTSTART;TZID=Europe/Berlin:{start.strftime('%Y%m%dT%H%M%S')}",
             f"DTEND;TZID=Europe/Berlin:{end.strftime('%Y%m%dT%H%M%S')}",
@@ -211,6 +244,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--key", default=DEFAULT_KEY, help="fussball.de widget key")
     parser.add_argument("--out-dir", default="out", type=Path)
+    parser.add_argument(
+        "--cal-name",
+        default="Fortuna Pankow C2-Junioren – Spielplan",
+        help="calendar name shown in subscribed clients (X-WR-CALNAME)",
+    )
     args = parser.parse_args(argv)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -227,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
 
     write_json(fixtures, args.out_dir / "fixtures.json")
     write_csv(fixtures, args.out_dir / "fixtures.csv")
-    write_ics(fixtures, args.out_dir / "fixtures.ics")
+    write_ics(fixtures, args.out_dir / "fixtures.ics", args.cal_name)
 
     for f in fixtures:
         when = f"{f.date or '?'} {f.time or ''}".strip()
