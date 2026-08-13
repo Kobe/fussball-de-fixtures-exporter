@@ -1,0 +1,123 @@
+[
+  {
+    "date": "2026-07-05",
+    "time": "13:00",
+    "weekday": "Sonntag",
+    "competition": "FS/CJ/B-FS/BZ-B/1",
+    "home": "SG Prenzlauer Berg U15",
+    "away": "FSV Fortuna Pankow II",
+    "score": "4:0",
+    "status": "acknowledged",
+    "match_id": "03160RQ0PS000000VS5489BUVSBBVPEU"
+  },
+  {
+    "date": "2026-08-29",
+    "time": "09:00",
+    "weekday": "Samstag",
+    "competition": "FS/CJ/K-FS/KR-B/1",
+    "home": "SG Blankenburg II",
+    "away": "FSV Fortuna Pankow II",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031F3C14FG000000VS5489BTVUS470OH"
+  },
+  {
+    "date": "2026-09-05",
+    "time": "10:30",
+    "weekday": "Samstag",
+    "competition": "2.C-Junioren Kreisklasse A St.1 Hin",
+    "home": "SV Berlin-Chemie Adlershof II",
+    "away": "FSV Fortuna Pankow II",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031FVRFN0K000000VS5489BTVVG7L386"
+  },
+  {
+    "date": "2026-09-12",
+    "time": "12:00",
+    "weekday": "Samstag",
+    "competition": "2.C-Junioren Kreisklasse A St.1 Hin",
+    "home": "FSV Fortuna Pankow II",
+    "away": "SV Bau-Union Berlin II",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031FVRFMNG000000VS5489BTVVG7L386"
+  },
+  {
+    "date": "2026-09-20",
+    "time": "12:30",
+    "weekday": "Sonntag",
+    "competition": "2.C-Junioren Kreisklasse A St.1 Hin",
+    "home": "FSV Berolina Stralau II",
+    "away": "FSV Fortuna Pankow II",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031FVRFML8000000VS5489BTVVG7L386"
+  },
+  {
+    "date": "2026-09-26",
+    "time": "12:00",
+    "weekday": "Samstag",
+    "competition": "2.C-Junioren Kreisklasse A St.1 Hin",
+    "home": "FSV Fortuna Pankow II",
+    "away": "BSV GW Neukölln II",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031FVRFM7K000000VS5489BTVVG7L386"
+  },
+  {
+    "date": "2026-10-03",
+    "time": "09:00",
+    "weekday": "Samstag",
+    "competition": "2.C-Junioren Kreisklasse A St.1 Hin",
+    "home": "Pfeffersport II",
+    "away": "FSV Fortuna Pankow II",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031FVRFM38000000VS5489BTVVG7L386"
+  },
+  {
+    "date": "2026-10-10",
+    "time": "12:00",
+    "weekday": "Samstag",
+    "competition": "2.C-Junioren Kreisklasse A St.1 Hin",
+    "home": "FSV Fortuna Pankow II",
+    "away": "Berliner TSC II",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031FVRFLMG000000VS5489BTVVG7L386"
+  },
+  {
+    "date": "2026-10-31",
+    "time": "12:00",
+    "weekday": "Samstag",
+    "competition": "2.C-Junioren Kreisklasse A St.1 Hin",
+    "home": "FSV Fortuna Pankow II",
+    "away": "VfB Hermsdorf U14",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031FVRFNQS000000VS5489BTVVG7L386"
+  },
+  {
+    "date": "2026-11-08",
+    "time": "14:20",
+    "weekday": "Sonntag",
+    "competition": "2.C-Junioren Kreisklasse A St.1 Hin",
+    "home": "SF Kladow II",
+    "away": "FSV Fortuna Pankow II",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031FVRFLH4000000VS5489BTVVG7L386"
+  },
+  {
+    "date": "2026-11-22",
+    "time": "12:00",
+    "weekday": "Sonntag",
+    "competition": "2.C-Junioren Kreisklasse A St.1 Hin",
+    "home": "Grün Weiss Baumschulenweg II",
+    "away": "FSV Fortuna Pankow II",
+    "score": "-:-",
+    "status": "scheduled",
+    "match_id": "031FVRFL9G000000VS5489BTVVG7L386"
+  }
+]
