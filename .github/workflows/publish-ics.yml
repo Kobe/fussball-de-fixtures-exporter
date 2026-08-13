@@ -31,34 +31,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Debug requests variants (temporary)
-        run: |
-          python - <<'EOF'
-          import json, re, requests
-          url = "https://next.fussball.de/widget/team-matches/1e84054a-be7f-4225-ae66-73bcc81e1528"
-          ref = "https://fortunapankow46ev.de/"
-          chrome = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
-          variants = {
-            "chrome-ua": {"User-Agent": chrome, "Accept-Language": "de-DE,de;q=0.9", "Referer": ref},
-            "no-ua": {"Referer": ref},
-            "urllib-ua": {"User-Agent": "Python-urllib/3.12", "Referer": ref},
-            "no-referer": {"User-Agent": chrome},
-          }
-          rx = re.compile(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
-          for name, h in variants.items():
-              r = requests.get(url, headers=h, timeout=30)
-              m = rx.search(r.text)
-              if not m:
-                  print(name, "HTTP", r.status_code, "no __NEXT_DATA__", len(r.text)); continue
-              pp = json.loads(m.group(1))["props"]["pageProps"]
-              print(name, "HTTP", r.status_code,
-                    "invalidReferrer=", pp.get("invalidReferrer"),
-                    "prev=", len(pp.get("previousMatches") or []),
-                    "next=", len(pp.get("nextMatches") or []),
-                    "keys=", [k for k in pp if k not in ("translations",)])
-          EOF
-
       - name: Fetch fixtures and build site
         run: |
           python export_fixtures.py --out-dir out

@@ -37,6 +37,7 @@ import io
 import json
 import re
 import sys
+import time
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -105,39 +106,48 @@ def deobfuscate(text: str, mapping: dict[str, str]) -> str:
 
 
 def fetch_widget(
-    key: str, session: requests.Session
+    key: str, session: requests.Session, attempts: int = 4
 ) -> tuple[dict, list[str]]:
-    """Return (pageProps, callers-that-worked) for the first usable widget."""
+    """Return (pageProps, callers-that-worked) for the first usable widget.
+
+    The backend occasionally serves a payload without the match list; retry
+    a few times before giving up.
+    """
     errors: list[str] = []
-    for caller in DEFAULT_CALLERS:
-        host = caller.rstrip("/") + "/"
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Accept-Language": "de-DE,de;q=0.9",
-            "Referer": host,
-        }
-        for wtype in WIDGET_TYPES:
-            url = f"{NEXT_BASE}/widget/{wtype}/{key}"
-            try:
-                resp = session.get(url, headers=headers, timeout=30)
-            except requests.RequestException as exc:
-                errors.append(f"{url} ({host}): {exc}")
-                continue
-            match = NEXT_DATA_RE.search(resp.text)
-            if not match:
-                errors.append(f"{url} ({host}): no __NEXT_DATA__ (HTTP {resp.status_code})")
-                continue
-            page = json.loads(match.group(1))["props"]["pageProps"]
-            if page.get("invalidReferrer"):
-                errors.append(f"{url} ({host}): invalidReferrer")
-                continue
-            if "previousMatches" in page or "nextMatches" in page:
-                return page, [host]
-            errors.append(f"{url} ({host}): no match list in payload")
+    for attempt in range(attempts):
+        for caller in DEFAULT_CALLERS:
+            host = caller.rstrip("/") + "/"
+            headers = {
+                "User-Agent": USER_AGENT,
+                "Accept-Language": "de-DE,de;q=0.9",
+                "Referer": host,
+            }
+            for wtype in WIDGET_TYPES:
+                url = f"{NEXT_BASE}/widget/{wtype}/{key}"
+                try:
+                    resp = session.get(url, headers=headers, timeout=30)
+                except requests.RequestException as exc:
+                    errors.append(f"{url} ({host}): {exc}")
+                    continue
+                match = NEXT_DATA_RE.search(resp.text)
+                if not match:
+                    errors.append(
+                        f"{url} ({host}): no __NEXT_DATA__ (HTTP {resp.status_code})"
+                    )
+                    continue
+                page = json.loads(match.group(1))["props"]["pageProps"]
+                if page.get("invalidReferrer"):
+                    errors.append(f"{url} ({host}): invalidReferrer")
+                    continue
+                if page.get("previousMatches") or page.get("nextMatches"):
+                    return page, [host]
+                errors.append(f"{url} ({host}): no match list in payload")
+        if attempt + 1 < attempts:
+            time.sleep(2 * (attempt + 1))
     raise RuntimeError(
         "Could not fetch widget data. Is the caller domain the website "
         "registered for the widget in the fussball.de Widgetcenter?\n  "
-        + "\n  ".join(errors)
+        + "\n  ".join(errors[-8:])
     )
 
 
