@@ -43,6 +43,10 @@ WIDGET_URLS = [
     BASE + "/widget2/widget/-/schluessel/{key}",
     # embed entry point (sometimes serves the table directly)
     BASE + "/widget2/-/schluessel/{key}",
+    # embed entry point with the target/caller segments the official
+    # embed snippet uses
+    BASE + "/widget2/-/schluessel/{key}/target/widget/caller/widget",
+    BASE + "/widget2/widget/-/schluessel/{key}/target/widget/caller/widget",
 ]
 HEADERS = {
     "User-Agent": (
@@ -70,18 +74,47 @@ class Fixture:
     raw: str = field(default="", repr=False)
 
 
+def _looks_usable(html: str) -> bool:
+    return "<table" in html or "club-name" in html
+
+
 def fetch_widget_html(key: str, session: requests.Session) -> str:
     errors = []
-    for tmpl in WIDGET_URLS:
-        url = tmpl.format(key=key)
+    seen: set[str] = set()
+    queue = [tmpl.format(key=key) for tmpl in WIDGET_URLS]
+    while queue:
+        url = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
         try:
             resp = session.get(url, headers=HEADERS, timeout=30)
         except requests.RequestException as exc:
             errors.append(f"{url}: {exc}")
             continue
-        if resp.ok and ("<table" in resp.text or "club-name" in resp.text):
+        if resp.ok and _looks_usable(resp.text):
             return resp.text
         errors.append(f"{url}: HTTP {resp.status_code}, {len(resp.text)} bytes")
+        # The embed endpoints often return a small bootstrap page that
+        # points at the real content (iframe src or a JS-injected URL).
+        # Follow every fussball.de URL we can find in the response.
+        for found in re.findall(
+            r"""(?:src|href)\s*=\s*["']([^"']+)["']|["'](/widget2/[^"']+)["']""",
+            resp.text,
+        ):
+            candidate = next(filter(None, found), "")
+            if not candidate or candidate.endswith((".js", ".css", ".png")):
+                continue
+            if candidate.startswith("//"):
+                candidate = "https:" + candidate
+            elif candidate.startswith("/"):
+                candidate = BASE + candidate
+            if candidate.startswith(BASE):
+                queue.append(candidate)
+        if len(resp.text) < 10000:
+            print(f"--- DEBUG response from {url} ---", file=sys.stderr)
+            print(resp.text, file=sys.stderr)
+            print("--- END DEBUG ---", file=sys.stderr)
     raise RuntimeError(
         "Could not fetch a usable widget page:\n  " + "\n  ".join(errors)
     )
