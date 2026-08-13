@@ -31,16 +31,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Debug widget types (temporary)
+      - name: Debug __NEXT_DATA__ (temporary)
         run: |
-          ID=1e84054a-be7f-4225-ae66-73bcc81e1528
-          for t in matches table fixtures team-matches club-matches spielplan games squad; do
-            u="https://next.fussball.de/widget/$t/$ID"
-            echo "=== $u"
-            curl -sSL -o /tmp/resp -w "HTTP %{http_code}, %{size_download} bytes\n" "$u" || true
-            head -c 3000 /tmp/resp || true
-            echo ""
-          done
+          python - <<'EOF'
+          import json, re, urllib.request
+          url = "https://next.fussball.de/widget/team-matches/1e84054a-be7f-4225-ae66-73bcc81e1528"
+          html = urllib.request.urlopen(url, timeout=30).read().decode("utf-8")
+          m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.S)
+          data = json.loads(m.group(1))
+          out = json.dumps(data, ensure_ascii=False, indent=1)
+          print(out[:24000])
+          EOF
 
       - name: Fetch fixtures and build site
         run: |
