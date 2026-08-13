@@ -31,19 +31,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Debug widgets.js (temporary)
+      - name: Debug widget types (temporary)
         run: |
-          echo "=== widgets.js ==="
-          curl -sS "https://www.fussball.de/widgets.js" | head -c 40000 || true
-          echo ""
-          echo "=== candidate endpoints ==="
-          for u in \
-            "https://www.fussball.de/widget/1e84054a-be7f-4225-ae66-73bcc81e1528" \
-            "https://www.fussball.de/widgets/1e84054a-be7f-4225-ae66-73bcc81e1528" \
-            "https://www.fussball.de/api/widget/1e84054a-be7f-4225-ae66-73bcc81e1528"; do
-            echo "--- $u"
-            curl -sS -o /tmp/resp -w "HTTP %{http_code}, %{size_download} bytes\n" "$u" || true
-            head -c 1500 /tmp/resp || true
+          ID=1e84054a-be7f-4225-ae66-73bcc81e1528
+          for t in matches table fixtures team-matches club-matches spielplan games squad; do
+            u="https://next.fussball.de/widget/$t/$ID"
+            echo "=== $u"
+            curl -sSL -o /tmp/resp -w "HTTP %{http_code}, %{size_download} bytes\n" "$u" || true
+            head -c 3000 /tmp/resp || true
             echo ""
           done
 
