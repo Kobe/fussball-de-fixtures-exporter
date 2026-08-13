@@ -31,48 +31,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Probe match detail for venue (temporary)
-        run: |
-          python - <<'EOF'
-          import json, re, requests
-          ref = "https://fortunapankow46ev.de/"
-          H = {"User-Agent": "Mozilla/5.0", "Referer": ref}
-          rx = re.compile(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
-          s = requests.Session()
-          w = s.get("https://next.fussball.de/widget/team-matches/1e84054a-be7f-4225-ae66-73bcc81e1528", headers=H, timeout=30)
-          pp = json.loads(rx.search(w.text).group(1))["props"]["pageProps"]
-          mid = (pp.get("nextMatches") or pp.get("previousMatches"))[0]["id"]
-          print("match id:", mid)
-
-          # 1) Which links does the widget HTML itself point at?
-          hrefs = sorted(set(re.findall(r'href="([^"]+)"', w.text)))
-          print("\n-- widget hrefs (spiel/match/verein) --")
-          for h in hrefs:
-              if any(k in h.lower() for k in ("spiel", "match", "verein", mid.lower())):
-                  print(" ", h)
-
-          # 2) Old www.fussball.de match page + ajax endpoints (known to hold venue)
-          candidates = [
-            f"https://www.fussball.de/spiel/-/spiel/{mid}",
-            f"https://www.fussball.de/ajax.spielplan.spieltag.dropdown/-/spiel/{mid}",
-            f"https://www.fussball.de/spielinfo/-/spiel/{mid}",
-            f"https://www.fussball.de/export.match/-/spiel/{mid}/type/json",
-          ]
-          for url in candidates:
-              try:
-                  r = s.get(url, headers=H, timeout=30, allow_redirects=True)
-              except Exception as e:
-                  print("\n===", url, "ERR", e); continue
-              body = r.text
-              print("\n===", url, "HTTP", r.status_code, "len", len(body), "final", r.url)
-              for kw in ("Spielst", "Sportanlage", "stadi", "Adresse", "Straße", "strasse",
-                         "Anschrift", "PLZ", "latitude", "longitude", "geo"):
-                  i = body.lower().find(kw.lower())
-                  if i >= 0:
-                      snippet = re.sub(r"\s+", " ", body[max(0,i-60):i+160])
-                      print(f"  [{kw}] ...{snippet}...")
-          EOF
-
       - name: Fetch fixtures and build site
         run: |
           python export_fixtures.py --out-dir out

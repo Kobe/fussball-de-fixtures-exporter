@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import html
 import io
 import json
 import re
@@ -69,6 +70,10 @@ NEXT_DATA_RE = re.compile(
 )
 DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{4})")
 TIME_RE = re.compile(r"(\d{1,2}):(\d{2})")
+# The classic match page carries the venue as the text of the location link,
+# e.g. `<a ...> Sportplatz X, Musterstr. 1, 13129 Berlin <span
+# class="icon-location">`. It is plain text (not font-obfuscated).
+VENUE_RE = re.compile(r'<a\b[^>]*>\s*([^<]+?)\s*<span[^>]*icon-location', re.I | re.S)
 
 
 @dataclass
@@ -80,6 +85,7 @@ class Fixture:
     home: str | None = None
     away: str | None = None
     score: str | None = None
+    venue: str | None = None         # Spielstätte incl. address
     status: str | None = None        # scheduled / acknowledged / ...
     match_id: str = field(default="", repr=False)
 
@@ -171,6 +177,24 @@ def fetch_font(font_id: str, referer: str, session: requests.Session) -> bytes:
     raise RuntimeError(f"Could not download obfuscation font {font_id}")
 
 
+def fetch_venue(match_id: str, session: requests.Session) -> str | None:
+    """Read the venue (Spielstätte incl. address) from the match page."""
+    if not match_id:
+        return None
+    url = f"{FONT_BASE}/spiel/-/spiel/{match_id}"
+    try:
+        resp = session.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+    except requests.RequestException:
+        return None
+    if not resp.ok:
+        return None
+    match = VENUE_RE.search(resp.text)
+    if not match:
+        return None
+    venue = _strip(html.unescape(match.group(1)))
+    return venue or None
+
+
 def _team_name(team: dict, mapping: dict[str, str]) -> str:
     return _strip(deobfuscate(team.get("name", ""), mapping))
 
@@ -232,11 +256,13 @@ def write_csv(fixtures: list[Fixture], path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(
-            ["date", "time", "weekday", "competition", "home", "away", "score", "status"]
+            ["date", "time", "weekday", "competition", "home", "away",
+             "score", "venue", "status"]
         )
         for f in fixtures:
             writer.writerow(
-                [f.date, f.time, f.weekday, f.competition, f.home, f.away, f.score, f.status]
+                [f.date, f.time, f.weekday, f.competition, f.home, f.away,
+                 f.score, f.venue, f.status]
             )
 
 
@@ -301,6 +327,8 @@ def write_ics(fixtures: list[Fixture], path: Path, cal_name: str) -> None:
             f"DTEND;TZID=Europe/Berlin:{end.strftime('%Y%m%dT%H%M%S')}",
             f"SUMMARY:{_ics_escape(summary)}",
         ]
+        if f.venue:
+            lines.append(f"LOCATION:{_ics_escape(f.venue)}")
         if f.competition:
             lines.append(f"DESCRIPTION:{_ics_escape(f.competition)}")
         lines.append("END:VEVENT")
@@ -325,6 +353,11 @@ def main(argv: list[str] | None = None) -> int:
             "website registered for the widget in the fussball.de "
             "Widgetcenter, sent as Referer (repeatable)"
         ),
+    )
+    parser.add_argument(
+        "--no-venues",
+        action="store_true",
+        help="skip fetching the venue/address for each match (faster)",
     )
     args = parser.parse_args(argv)
 
@@ -353,13 +386,21 @@ def main(argv: list[str] | None = None) -> int:
         print("No matches found in widget payload.", file=sys.stderr)
         return 1
 
+    if not args.no_venues:
+        print("Fetching venues ...", file=sys.stderr)
+        for f in fixtures:
+            f.venue = fetch_venue(f.match_id, session)
+
     write_json(fixtures, args.out_dir / "fixtures.json")
     write_csv(fixtures, args.out_dir / "fixtures.csv")
     write_ics(fixtures, args.out_dir / "fixtures.ics", args.cal_name)
 
     for f in fixtures:
         when = f"{f.date or '????-??-??'} {f.time or '--:--'}"
-        print(f"{when}  {f.home or '?'} - {f.away or '?'}  {f.score or ''}".rstrip())
+        line = f"{when}  {f.home or '?'} - {f.away or '?'}  {f.score or ''}".rstrip()
+        if f.venue:
+            line += f"  @ {f.venue}"
+        print(line)
     print(f"\n{len(fixtures)} matches written to {args.out_dir}/", file=sys.stderr)
     return 0
 
