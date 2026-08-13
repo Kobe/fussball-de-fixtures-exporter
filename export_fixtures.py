@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
-"""Export fixtures (Spielplan) from a fussball.de widget.
+"""Export fixtures (Spielplan) from a fussball.de team widget.
 
-Fetches the match table behind a fussball.de widget key and exports it as
-JSON, CSV and ICS (calendar). Works with the widget embed keys that
-fussball.de hands out for club/team widgets, e.g.:
+Fetches the match list behind a fussball.de widget key and exports it as
+JSON, CSV and ICS (calendar). It targets the current widget backend at
+``next.fussball.de``, which the official embed snippet loads in an iframe:
 
-    <script src="//www.fussball.de/widget2/-/schluessel/<KEY>/..."></script>
+    <script src="https://www.fussball.de/widgets.js"></script>
+    <div class="fussballde_widget" data-id="<KEY>" data-type="team-matches">
 
 Usage:
     python export_fixtures.py --key 1e84054a-be7f-4225-ae66-73bcc81e1528
 
 Outputs are written to the --out-dir (default: ./out):
-    fixtures.json, fixtures.csv, fixtures.ics, widget.html (raw, for debugging)
+    fixtures.json, fixtures.csv, fixtures.ics
 
-Notes:
-- Future matches usually show "-:-" as score.
-- fussball.de obfuscates final scores with a scrambled webfont in some
-  views; if the parsed score looks like garbage characters, that is why.
-  Dates, kick-off times and team names are plain text and always usable.
+How it works
+------------
+The widget page ships all matches as JSON inside ``__NEXT_DATA__``. The
+human-readable text (dates, kick-off times, team and competition names,
+results) is obfuscated with a per-request web font that maps random
+Private-Use codepoints onto ordinary glyphs. We download that font, read
+its ``cmap`` (Private-Use codepoint -> PostScript glyph name -> real
+character via the Adobe Glyph List) and decode the text back.
+
+The widget only serves data when the request looks like it comes from the
+website registered for the widget in the fussball.de Widgetcenter, so we
+send that domain as ``Referer`` (see --caller).
 """
 
 from __future__ import annotations
@@ -25,6 +33,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
 import re
 import sys
@@ -34,34 +43,31 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
-from bs4 import BeautifulSoup
+from fontTools.agl import toUnicode
+from fontTools.ttLib import TTFont
 
-DEFAULT_KEY = "1e84054a-be7f-4225-ae66-73bcc81e1528"  # Fortuna Pankow, C2-Junioren
-BASE = "https://www.fussball.de"
-# The widget key is bound to the website registered in the fussball.de
-# Widgetcenter. The server validates the /caller/<hostname> path segment
-# against that registration, so we must present the registered domain.
+DEFAULT_KEY = "1e84054a-be7f-4225-ae66-73bcc81e1528"  # Fortuna Pankow C-Junioren II
+NEXT_BASE = "https://next.fussball.de"
+FONT_BASE = "https://www.fussball.de"
+# Widget flavours that carry a match list; team-matches is the usual one.
+WIDGET_TYPES = ["team-matches", "club-matches", "matches"]
+# Website registered for the widget in the fussball.de Widgetcenter. The
+# backend validates the request's Referer/host against it.
 DEFAULT_CALLERS = [
-    "fortunapankow46ev.de",
-    "www.fortunapankow46ev.de",
-    "kobe.github.io",
+    "https://fortunapankow46ev.de/",
+    "https://www.fortunapankow46ev.de/",
 ]
-WIDGET_URLS = [
-    BASE + "/widget2/-/schluessel/{key}/target/widget/caller/{caller}",
-    BASE + "/widget2/widget/-/schluessel/{key}/target/widget/caller/{caller}",
-]
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-    ),
-    "Accept-Language": "de-DE,de;q=0.9",
-    "Referer": BASE + "/",
-}
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+)
 TZ = ZoneInfo("Europe/Berlin")
 
-DATE_RE = re.compile(r"(\d{2})\.(\d{2})\.(\d{2,4})")
-TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*Uhr")
+NEXT_DATA_RE = re.compile(
+    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S
+)
+DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{4})")
+TIME_RE = re.compile(r"(\d{1,2}):(\d{2})")
 
 
 @dataclass
@@ -73,110 +79,135 @@ class Fixture:
     home: str | None = None
     away: str | None = None
     score: str | None = None
-    raw: str = field(default="", repr=False)
+    status: str | None = None        # scheduled / acknowledged / ...
+    match_id: str = field(default="", repr=False)
 
 
-def _looks_usable(html: str) -> bool:
-    if "Uuups" in html:  # fussball.de widget error page
-        return False
-    return "<table" in html or "club-name" in html
+def _strip(text: str) -> str:
+    """Drop zero-width joiners the widget sprinkles into names, tidy spaces."""
+    text = text.replace("​", "").replace("‎", "").replace("‏", "")
+    return re.sub(r"\s+", " ", text).strip()
 
 
-def fetch_widget_html(
-    key: str, session: requests.Session, callers: list[str]
-) -> str:
-    errors = []
-    last_body = ""
-    for caller in callers:
-        for tmpl in WIDGET_URLS:
-            url = tmpl.format(key=key, caller=caller)
-            headers = dict(HEADERS, Referer=f"https://{caller}/")
+def build_deobfuscation_map(font_bytes: bytes) -> dict[str, str]:
+    """Map each Private-Use codepoint in the font to its real character."""
+    font = TTFont(io.BytesIO(font_bytes))
+    mapping: dict[str, str] = {}
+    for codepoint, glyph_name in font.getBestCmap().items():
+        real = toUnicode(glyph_name)
+        if real:
+            mapping[chr(codepoint)] = real
+    return mapping
+
+
+def deobfuscate(text: str, mapping: dict[str, str]) -> str:
+    return "".join(mapping.get(ch, ch) for ch in text)
+
+
+def fetch_widget(
+    key: str, session: requests.Session
+) -> tuple[dict, list[str]]:
+    """Return (pageProps, callers-that-worked) for the first usable widget."""
+    errors: list[str] = []
+    for caller in DEFAULT_CALLERS:
+        host = caller.rstrip("/") + "/"
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept-Language": "de-DE,de;q=0.9",
+            "Referer": host,
+        }
+        for wtype in WIDGET_TYPES:
+            url = f"{NEXT_BASE}/widget/{wtype}/{key}"
             try:
                 resp = session.get(url, headers=headers, timeout=30)
             except requests.RequestException as exc:
-                errors.append(f"{url}: {exc}")
+                errors.append(f"{url} ({host}): {exc}")
                 continue
-            if resp.ok and _looks_usable(resp.text):
-                print(f"Widget served for caller {caller}", file=sys.stderr)
-                return resp.text
-            errors.append(
-                f"{url}: HTTP {resp.status_code}, {len(resp.text)} bytes"
-            )
-            last_body = resp.text
-    if last_body:
-        print("--- DEBUG last response body ---", file=sys.stderr)
-        print(last_body[:10000], file=sys.stderr)
-        print("--- END DEBUG ---", file=sys.stderr)
+            match = NEXT_DATA_RE.search(resp.text)
+            if not match:
+                errors.append(f"{url} ({host}): no __NEXT_DATA__ (HTTP {resp.status_code})")
+                continue
+            page = json.loads(match.group(1))["props"]["pageProps"]
+            if page.get("invalidReferrer"):
+                errors.append(f"{url} ({host}): invalidReferrer")
+                continue
+            if "previousMatches" in page or "nextMatches" in page:
+                return page, [host]
+            errors.append(f"{url} ({host}): no match list in payload")
     raise RuntimeError(
-        "Could not fetch a usable widget page (is the caller domain the "
-        "website registered in the fussball.de Widgetcenter?):\n  "
+        "Could not fetch widget data. Is the caller domain the website "
+        "registered for the widget in the fussball.de Widgetcenter?\n  "
         + "\n  ".join(errors)
     )
 
 
-def _clean(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def parse_fixtures(html: str) -> list[Fixture]:
-    soup = BeautifulSoup(html, "html.parser")
-    fixtures: list[Fixture] = []
-    current_date: str | None = None
-    current_time: str | None = None
-    current_weekday: str | None = None
-    current_competition: str | None = None
-
-    for tr in soup.find_all("tr"):
-        classes = tr.get("class") or []
-        text = _clean(tr.get_text(" "))
-        if not text:
-            continue
-
-        # Headline rows carry date, kick-off time and competition, e.g.
-        # "Samstag, 22.08.2026 - 14:00 Uhr | D-Junioren Kreisliga"
-        if "row-headline" in classes or "row-competition" in classes:
-            m = DATE_RE.search(text)
-            if m:
-                day, month, year = m.groups()
-                if len(year) == 2:
-                    year = "20" + year
-                current_date = f"{year}-{month}-{day}"
-                weekday_part = text.split(",", 1)[0]
-                current_weekday = weekday_part if m.start() > 0 else None
-            t = TIME_RE.search(text)
-            current_time = f"{int(t.group(1)):02d}:{t.group(2)}" if t else None
-            if "|" in text:
-                current_competition = _clean(text.split("|", 1)[1])
-            elif not m:
-                # competition-only row
-                current_competition = text
-            continue
-
-        clubs = tr.find_all("td", class_=re.compile("club"))
-        if len(clubs) >= 2:
-            home = _clean(clubs[0].get_text(" "))
-            away = _clean(clubs[-1].get_text(" "))
-            score_td = tr.find("td", class_=re.compile("score"))
-            score = _clean(score_td.get_text(" ")) if score_td else None
-            fixtures.append(
-                Fixture(
-                    date=current_date,
-                    time=current_time,
-                    weekday=current_weekday,
-                    competition=current_competition,
-                    home=home,
-                    away=away,
-                    score=score or None,
-                    raw=text,
-                )
+def fetch_font(font_id: str, referer: str, session: requests.Session) -> bytes:
+    for fmt in ("woff", "ttf"):
+        url = f"{FONT_BASE}/export.fontface/-/format/{fmt}/id/{font_id}/type/font"
+        try:
+            resp = session.get(
+                url,
+                headers={"User-Agent": USER_AGENT, "Referer": referer},
+                timeout=30,
             )
+        except requests.RequestException:
+            continue
+        if resp.ok and resp.content:
+            try:
+                TTFont(io.BytesIO(resp.content))  # validate
+                return resp.content
+            except Exception:
+                continue
+    raise RuntimeError(f"Could not download obfuscation font {font_id}")
 
-    # Fallback: unknown markup — keep raw rows so the user sees something.
-    if not fixtures:
-        for tr in soup.find_all("tr"):
-            text = _clean(tr.get_text(" "))
-            if text:
-                fixtures.append(Fixture(raw=text))
+
+def _team_name(team: dict, mapping: dict[str, str]) -> str:
+    return _strip(deobfuscate(team.get("name", ""), mapping))
+
+
+def parse_matches(page: dict, mapping: dict[str, str]) -> list[Fixture]:
+    fixtures: list[Fixture] = []
+    raw = (page.get("previousMatches") or []) + (page.get("nextMatches") or [])
+    for m in raw:
+        kickoff = m.get("kickoff", {})
+        date_text = _strip(deobfuscate(kickoff.get("date", ""), mapping))
+        weekday_text = _strip(deobfuscate(kickoff.get("dateWithWeekday", ""), mapping))
+        time_text = _strip(deobfuscate(kickoff.get("time", ""), mapping))
+
+        iso_date = None
+        dm = DATE_RE.search(date_text) or DATE_RE.search(weekday_text)
+        if dm:
+            day, month, year = dm.groups()
+            iso_date = f"{year}-{int(month):02d}-{int(day):02d}"
+
+        iso_time = None
+        tm = TIME_RE.search(time_text)
+        if tm:
+            iso_time = f"{int(tm.group(1)):02d}:{tm.group(2)}"
+
+        weekday = None
+        if "," in weekday_text:
+            weekday = weekday_text.split(",", 1)[0].strip()
+
+        result = m.get("result", {})
+        score = _strip(deobfuscate(result.get("text", ""), mapping)).replace(" ", "")
+        score = score or None
+
+        fixtures.append(
+            Fixture(
+                date=iso_date,
+                time=iso_time,
+                weekday=weekday,
+                competition=_strip(deobfuscate(m.get("competitionName", ""), mapping))
+                or None,
+                home=_team_name(m.get("homeTeam", {}), mapping) or None,
+                away=_team_name(m.get("guestTeam", {}), mapping) or None,
+                score=score,
+                status=m.get("status"),
+                match_id=m.get("id", ""),
+            )
+        )
+    fixtures.sort(key=lambda f: (f.date or "9999", f.time or ""))
     return fixtures
 
 
@@ -191,11 +222,11 @@ def write_csv(fixtures: list[Fixture], path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(
-            ["date", "time", "weekday", "competition", "home", "away", "score"]
+            ["date", "time", "weekday", "competition", "home", "away", "score", "status"]
         )
         for f in fixtures:
             writer.writerow(
-                [f.date, f.time, f.weekday, f.competition, f.home, f.away, f.score]
+                [f.date, f.time, f.weekday, f.competition, f.home, f.away, f.score, f.status]
             )
 
 
@@ -245,16 +276,16 @@ def write_ics(fixtures: list[Fixture], path: Path, cal_name: str) -> None:
         start = datetime.fromisoformat(f"{f.date}T{time_part}").replace(tzinfo=TZ)
         end = start + timedelta(hours=2)
         summary = f"{f.home} vs. {f.away}"
-        if f.score and f.score != "-:-":
+        if f.score and f.score not in ("-:-", ":"):
             summary += f" ({f.score})"
-        # UID must stay stable across runs so subscribed clients update
-        # events in place instead of duplicating them.
-        uid_hash = hashlib.sha1(
+        # Prefer the stable match id so subscribed clients update events in
+        # place; fall back to a content hash when it is missing.
+        uid = f.match_id or hashlib.sha1(
             f"{f.date}|{f.home}|{f.away}".encode()
         ).hexdigest()[:16]
         lines += [
             "BEGIN:VEVENT",
-            f"UID:{uid_hash}@fussball-de-fixtures-exporter",
+            f"UID:{uid}@fussball-de-fixtures-exporter",
             f"DTSTAMP:{stamp}",
             f"DTSTART;TZID=Europe/Berlin:{start.strftime('%Y%m%dT%H%M%S')}",
             f"DTEND;TZID=Europe/Berlin:{end.strftime('%Y%m%dT%H%M%S')}",
@@ -273,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", default="out", type=Path)
     parser.add_argument(
         "--cal-name",
-        default="Fortuna Pankow C2-Junioren – Spielplan",
+        default="Fortuna Pankow C-Junioren – Spielplan",
         help="calendar name shown in subscribed clients (X-WR-CALNAME)",
     )
     parser.add_argument(
@@ -281,22 +312,35 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         dest="callers",
         help=(
-            "website domain registered for the widget in the fussball.de "
-            "Widgetcenter (repeatable; defaults to known candidates)"
+            "website registered for the widget in the fussball.de "
+            "Widgetcenter, sent as Referer (repeatable)"
         ),
     )
     args = parser.parse_args(argv)
+
+    if args.callers:
+        DEFAULT_CALLERS[:] = [
+            c if c.startswith("http") else f"https://{c}/" for c in args.callers
+        ]
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
 
     print(f"Fetching widget {args.key} ...", file=sys.stderr)
-    html = fetch_widget_html(args.key, session, args.callers or DEFAULT_CALLERS)
-    (args.out_dir / "widget.html").write_text(html, encoding="utf-8")
+    page, callers = fetch_widget(args.key, session)
 
-    fixtures = parse_fixtures(html)
+    team = _strip(page.get("teamName", "")) or "?"
+    print(f"Team: {team}", file=sys.stderr)
+
+    font_id = page.get("obfuscatedFont")
+    mapping: dict[str, str] = {}
+    if font_id:
+        font_bytes = fetch_font(font_id, callers[0], session)
+        mapping = build_deobfuscation_map(font_bytes)
+
+    fixtures = parse_matches(page, mapping)
     if not fixtures:
-        print("No fixtures found in widget HTML.", file=sys.stderr)
+        print("No matches found in widget payload.", file=sys.stderr)
         return 1
 
     write_json(fixtures, args.out_dir / "fixtures.json")
@@ -304,9 +348,9 @@ def main(argv: list[str] | None = None) -> int:
     write_ics(fixtures, args.out_dir / "fixtures.ics", args.cal_name)
 
     for f in fixtures:
-        when = f"{f.date or '?'} {f.time or ''}".strip()
-        print(f"{when}  {f.home or f.raw} - {f.away or ''}  {f.score or ''}".rstrip())
-    print(f"\n{len(fixtures)} fixtures written to {args.out_dir}/", file=sys.stderr)
+        when = f"{f.date or '????-??-??'} {f.time or '--:--'}"
+        print(f"{when}  {f.home or '?'} - {f.away or '?'}  {f.score or ''}".rstrip())
+    print(f"\n{len(fixtures)} matches written to {args.out_dir}/", file=sys.stderr)
     return 0
 
 
