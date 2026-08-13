@@ -31,7 +31,7 @@ Die Ergebnisse landen im Ausgabeverzeichnis (`out/` per Default):
 | --------------- | --------------------------------------------- |
 | `fixtures.json` | Alle Spiele als strukturiertes JSON           |
 | `fixtures.csv`  | Alle Spiele als CSV (Datum, Zeit, Teams, ...) |
-| `fixtures.ics`  | Kalender-Datei zum Import (2h pro Spiel)      |
+| `fixtures.ics`  | Kalender-Datei (2h pro Spiel, mit Spielort)   |
 
 Zusätzlich wird der Spielplan auf der Konsole ausgegeben.
 
@@ -72,5 +72,9 @@ der Workflow bei jedem Push auf `main`, alle sechs Stunden und manuell
 ## Hinweise
 
 - Zukünftige Spiele zeigen als Ergebnis `-:-`.
+- Der **Spielort inkl. Adresse** wird pro Spiel von der klassischen
+  Spielseite geholt und landet als `LOCATION` im Kalender (in Google/Apple
+  Kalender direkt navigierbar) sowie als Spalte in CSV/JSON. Mit
+  `--no-venues` lässt sich das abschalten (spart pro Spiel einen Abruf).
 - Der Abruf benötigt Internetzugriff auf `next.fussball.de` und
-  `www.fussball.de` (für den Font).
+  `www.fussball.de` (Font + Spielort).
