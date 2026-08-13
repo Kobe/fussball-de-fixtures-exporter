@@ -38,15 +38,17 @@ from bs4 import BeautifulSoup
 
 DEFAULT_KEY = "1e84054a-be7f-4225-ae66-73bcc81e1528"  # Fortuna Pankow, C2-Junioren
 BASE = "https://www.fussball.de"
+# The widget key is bound to the website registered in the fussball.de
+# Widgetcenter. The server validates the /caller/<hostname> path segment
+# against that registration, so we must present the registered domain.
+DEFAULT_CALLERS = [
+    "fortunapankow46ev.de",
+    "www.fortunapankow46ev.de",
+    "kobe.github.io",
+]
 WIDGET_URLS = [
-    # iframe content injected by the embed script
-    BASE + "/widget2/widget/-/schluessel/{key}",
-    # embed entry point (sometimes serves the table directly)
-    BASE + "/widget2/-/schluessel/{key}",
-    # embed entry point with the target/caller segments the official
-    # embed snippet uses
-    BASE + "/widget2/-/schluessel/{key}/target/widget/caller/widget",
-    BASE + "/widget2/widget/-/schluessel/{key}/target/widget/caller/widget",
+    BASE + "/widget2/-/schluessel/{key}/target/widget/caller/{caller}",
+    BASE + "/widget2/widget/-/schluessel/{key}/target/widget/caller/{caller}",
 ]
 HEADERS = {
     "User-Agent": (
@@ -75,48 +77,40 @@ class Fixture:
 
 
 def _looks_usable(html: str) -> bool:
+    if "Uuups" in html:  # fussball.de widget error page
+        return False
     return "<table" in html or "club-name" in html
 
 
-def fetch_widget_html(key: str, session: requests.Session) -> str:
+def fetch_widget_html(
+    key: str, session: requests.Session, callers: list[str]
+) -> str:
     errors = []
-    seen: set[str] = set()
-    queue = [tmpl.format(key=key) for tmpl in WIDGET_URLS]
-    while queue:
-        url = queue.pop(0)
-        if url in seen:
-            continue
-        seen.add(url)
-        try:
-            resp = session.get(url, headers=HEADERS, timeout=30)
-        except requests.RequestException as exc:
-            errors.append(f"{url}: {exc}")
-            continue
-        if resp.ok and _looks_usable(resp.text):
-            return resp.text
-        errors.append(f"{url}: HTTP {resp.status_code}, {len(resp.text)} bytes")
-        # The embed endpoints often return a small bootstrap page that
-        # points at the real content (iframe src or a JS-injected URL).
-        # Follow every fussball.de URL we can find in the response.
-        for found in re.findall(
-            r"""(?:src|href)\s*=\s*["']([^"']+)["']|["'](/widget2/[^"']+)["']""",
-            resp.text,
-        ):
-            candidate = next(filter(None, found), "")
-            if not candidate or candidate.endswith((".js", ".css", ".png")):
+    last_body = ""
+    for caller in callers:
+        for tmpl in WIDGET_URLS:
+            url = tmpl.format(key=key, caller=caller)
+            headers = dict(HEADERS, Referer=f"https://{caller}/")
+            try:
+                resp = session.get(url, headers=headers, timeout=30)
+            except requests.RequestException as exc:
+                errors.append(f"{url}: {exc}")
                 continue
-            if candidate.startswith("//"):
-                candidate = "https:" + candidate
-            elif candidate.startswith("/"):
-                candidate = BASE + candidate
-            if candidate.startswith(BASE):
-                queue.append(candidate)
-        if len(resp.text) < 10000:
-            print(f"--- DEBUG response from {url} ---", file=sys.stderr)
-            print(resp.text, file=sys.stderr)
-            print("--- END DEBUG ---", file=sys.stderr)
+            if resp.ok and _looks_usable(resp.text):
+                print(f"Widget served for caller {caller}", file=sys.stderr)
+                return resp.text
+            errors.append(
+                f"{url}: HTTP {resp.status_code}, {len(resp.text)} bytes"
+            )
+            last_body = resp.text
+    if last_body:
+        print("--- DEBUG last response body ---", file=sys.stderr)
+        print(last_body[:10000], file=sys.stderr)
+        print("--- END DEBUG ---", file=sys.stderr)
     raise RuntimeError(
-        "Could not fetch a usable widget page:\n  " + "\n  ".join(errors)
+        "Could not fetch a usable widget page (is the caller domain the "
+        "website registered in the fussball.de Widgetcenter?):\n  "
+        + "\n  ".join(errors)
     )
 
 
@@ -282,13 +276,22 @@ def main(argv: list[str] | None = None) -> int:
         default="Fortuna Pankow C2-Junioren – Spielplan",
         help="calendar name shown in subscribed clients (X-WR-CALNAME)",
     )
+    parser.add_argument(
+        "--caller",
+        action="append",
+        dest="callers",
+        help=(
+            "website domain registered for the widget in the fussball.de "
+            "Widgetcenter (repeatable; defaults to known candidates)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
 
     print(f"Fetching widget {args.key} ...", file=sys.stderr)
-    html = fetch_widget_html(args.key, session)
+    html = fetch_widget_html(args.key, session, args.callers or DEFAULT_CALLERS)
     (args.out_dir / "widget.html").write_text(html, encoding="utf-8")
 
     fixtures = parse_fixtures(html)
