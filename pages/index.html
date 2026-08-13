@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fortuna Pankow C2-Junioren – Spielplan-Abo</title>
+  <title>Fortuna Pankow C-Junioren – Spielplan-Abo</title>
   <style>
     :root { color-scheme: light dark; }
     body {
@@ -27,26 +27,58 @@
       text-decoration: none;
       margin: .25rem .5rem .25rem 0;
     }
+    .platform {
+      border: 1px solid rgba(128, 128, 128, .3);
+      border-radius: .5rem;
+      padding: .5rem 1rem;
+      margin: 1rem 0;
+    }
+    .platform h3 { margin: .5rem 0; }
+    ol { padding-left: 1.2rem; }
   </style>
 </head>
 <body>
-  <h1>⚽ Fortuna Pankow C2-Junioren</h1>
+  <h1>⚽ Fortuna Pankow C-Junioren</h1>
   <p>
     Spielplan als Kalender-Abo. Die Daten kommen von
-    <a href="https://www.fussball.de">fussball.de</a> und werden alle
-    sechs Stunden automatisch aktualisiert.
+    <a href="https://www.fussball.de">fussball.de</a> und werden täglich
+    automatisch aktualisiert – inklusive Spielort.
   </p>
 
   <h2>Kalender abonnieren</h2>
-  <p>
-    <a class="button" id="webcal" href="#">📅 Abonnieren (webcal)</a>
-    <a class="button" href="fixtures.ics">⬇️ ICS herunterladen</a>
-  </p>
-  <p>
-    Zum Abonnieren in Google Kalender, Apple Kalender oder Outlook diese
-    URL als Kalender-Abo hinzufügen:
-  </p>
-  <p><code id="ics-url"></code></p>
+
+  <div class="platform">
+    <h3>📱 iPhone / iPad · Apple Kalender</h3>
+    <p>Einfach auf den Button tippen und bestätigen:</p>
+    <p><a class="button" id="webcal" href="#">📅 Abonnieren (webcal)</a></p>
+  </div>
+
+  <div class="platform">
+    <h3>🤖 Android · Google Kalender</h3>
+    <p>
+      Wichtig: Die Google-Kalender-<strong>App</strong> kann Abo-URLs nicht
+      selbst hinzufügen. Das Abo muss einmalig über die Weboberfläche
+      angelegt werden – danach erscheint es automatisch in der App auf
+      deinem Handy.
+    </p>
+    <p><a class="button" id="gcal" href="#" target="_blank" rel="noopener">📅 In Google Kalender abonnieren</a></p>
+    <p>Falls der Button nichts tut, manuell:</p>
+    <ol>
+      <li>Am Computer (oder im Browser als „Desktop-Website")
+        <a href="https://calendar.google.com" target="_blank" rel="noopener">calendar.google.com</a> öffnen.</li>
+      <li>Links neben „Weitere Kalender" auf <strong>+</strong> → <strong>Per URL</strong>.</li>
+      <li>Die untenstehende URL einfügen und <strong>Kalender hinzufügen</strong>.</li>
+      <li>In der Handy-App ggf. unter <em>Einstellungen</em> die Anzeige
+        des neuen Kalenders aktivieren.</li>
+    </ol>
+  </div>
+
+  <div class="platform">
+    <h3>🗓️ Outlook / Sonstige · manuell</h3>
+    <p>Diese URL als Kalender-Abo (nicht als Import) hinzufügen:</p>
+    <p><code id="ics-url"></code></p>
+    <p><a class="button" href="fixtures.ics">⬇️ ICS herunterladen</a></p>
+  </div>
 
   <h2>Weitere Formate</h2>
   <p>
@@ -58,6 +90,9 @@
     const icsUrl = new URL("fixtures.ics", location.href).href;
     document.getElementById("ics-url").textContent = icsUrl;
     document.getElementById("webcal").href = icsUrl.replace(/^https?:/, "webcal:");
+    document.getElementById("gcal").href =
+      "https://calendar.google.com/calendar/u/0/r/settings/addbyurl?cid=" +
+      encodeURIComponent(icsUrl);
   </script>
 </body>
 </html>
