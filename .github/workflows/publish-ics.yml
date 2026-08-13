@@ -2,8 +2,8 @@ name: Publish ICS to GitHub Pages
 
 on:
   schedule:
-    # every 6 hours — keeps the subscribed calendar reasonably fresh
-    - cron: "23 */6 * * *"
+    # once a day at 05:23 UTC (~07:23 Berlin) — refreshes the calendar daily
+    - cron: "23 5 * * *"
   push:
     branches: [main]
   workflow_dispatch:
