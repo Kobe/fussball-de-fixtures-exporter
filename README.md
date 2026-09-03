@@ -53,7 +53,7 @@ daher wird diese Domain als `Referer` gesendet (siehe `--caller`).
 ## Kalender-Abo über GitHub Pages
 
 Der Workflow [`publish-ics.yml`](.github/workflows/publish-ics.yml) ruft
-den Spielplan alle sechs Stunden ab und veröffentlicht ihn über GitHub
+den Spielplan einmal täglich ab und veröffentlicht ihn über GitHub
 Pages. Den Kalender kann man dann in Google Kalender, Apple Kalender
 oder Outlook als Abo hinzufügen:
 
@@ -66,12 +66,18 @@ gibt es außerdem einen Webcal-Link sowie JSON- und CSV-Downloads.
 
 **Einmalige Einrichtung:** In den Repo-Einstellungen unter
 *Settings → Pages* als Source **GitHub Actions** auswählen. Danach läuft
-der Workflow bei jedem Push auf `main`, alle sechs Stunden und manuell
+der Workflow bei jedem Push auf `main`, einmal täglich und manuell
 (*Actions → Publish ICS to GitHub Pages → Run workflow*).
 
 ## Hinweise
 
 - Zukünftige Spiele zeigen als Ergebnis `-:-`.
+- Steht der **Gegner noch nicht fest** (z. B. Pokalrunde vor der
+  Auslosung), liefert fussball.de das Team als `null`. Solche Spiele
+  kommen mit Datum und `?` als Gegner in den Kalender (Hinweis in der
+  Beschreibung). Sobald die Paarung feststeht, aktualisiert sich der
+  Termin im Abo an Ort und Stelle – die Spiel-ID bleibt als `UID`
+  gleich. Nur Spiele **ohne Datum** bleiben außen vor.
 - Der **Spielort inkl. Adresse** wird pro Spiel von der klassischen
   Spielseite geholt und landet als `LOCATION` im Kalender (in Google/Apple
   Kalender direkt navigierbar) sowie als Spalte in CSV/JSON. Mit

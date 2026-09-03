@@ -64,6 +64,8 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 )
 TZ = ZoneInfo("Europe/Berlin")
+# Stands in for a team the pairing has not produced yet (cup rounds, byes).
+OPEN_OPPONENT = "?"
 
 NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S
@@ -325,23 +327,28 @@ def write_ics(fixtures: list[Fixture], path: Path, cal_name: str) -> None:
     ]
     stamp = datetime.now(tz=ZoneInfo("UTC")).strftime("%Y%m%dT%H%M%SZ")
     skipped = 0
+    open_opponent = 0
     for f in fixtures:
-        # A fixture can lack a date or an opponent (not drawn yet); such an
-        # entry has nothing to put in a calendar, so leave it out -- but say
-        # so, otherwise the calendar quietly shrinks.
-        if not (f.date and f.home and f.away):
+        # Without a date there is nothing to put in a calendar. A missing
+        # opponent is fine: the date is already worth blocking off, and the
+        # event updates in place once the pairing is drawn (same UID).
+        if not f.date:
             skipped += 1
             continue
         time_part = f.time or "00:00"
         start = datetime.fromisoformat(f"{f.date}T{time_part}").replace(tzinfo=TZ)
         end = start + timedelta(hours=2)
-        summary = f"{f.home} vs. {f.away}"
+        home = f.home or OPEN_OPPONENT
+        away = f.away or OPEN_OPPONENT
+        if not (f.home and f.away):
+            open_opponent += 1
+        summary = f"{home} vs. {away}"
         if f.score and f.score not in ("-:-", ":"):
             summary += f" ({f.score})"
         # Prefer the stable match id so subscribed clients update events in
         # place; fall back to a content hash when it is missing.
         uid = f.match_id or hashlib.sha1(
-            f"{f.date}|{f.home}|{f.away}".encode()
+            f"{f.date}|{home}|{away}".encode()
         ).hexdigest()[:16]
         lines += [
             "BEGIN:VEVENT",
@@ -353,15 +360,25 @@ def write_ics(fixtures: list[Fixture], path: Path, cal_name: str) -> None:
         ]
         if f.venue:
             lines.append(f"LOCATION:{_ics_escape(f.venue)}")
-        if f.competition:
-            lines.append(f"DESCRIPTION:{_ics_escape(f.competition)}")
+        # ICS folds a multi-line value onto one line with a literal \n.
+        description = [_ics_escape(f.competition)] if f.competition else []
+        if not (f.home and f.away):
+            description.append("Gegner steht noch nicht fest.")
+        if description:
+            lines.append("DESCRIPTION:" + "\\n".join(description))
         lines.append("END:VEVENT")
     lines.append("END:VCALENDAR")
     path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+    if open_opponent:
+        print(
+            f"Note: {open_opponent} of {len(fixtures)} matches have no "
+            f"opponent yet and show as \"{OPEN_OPPONENT}\" in the calendar.",
+            file=sys.stderr,
+        )
     if skipped:
         print(
-            f"Note: {skipped} of {len(fixtures)} matches have no date or no "
-            "opponent yet and are not in the calendar.",
+            f"Note: {skipped} of {len(fixtures)} matches have no date yet "
+            "and are not in the calendar.",
             file=sys.stderr,
         )
 
