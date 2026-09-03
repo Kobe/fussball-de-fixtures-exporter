@@ -64,6 +64,8 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 )
 TZ = ZoneInfo("Europe/Berlin")
+# Stands in for a team the pairing has not produced yet (cup rounds, byes).
+OPEN_OPPONENT = "?"
 
 NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S
@@ -94,6 +96,17 @@ def _strip(text: str) -> str:
     """Drop zero-width joiners the widget sprinkles into names, tidy spaces."""
     text = text.replace("​", "").replace("‎", "").replace("‏", "")
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _get(obj: dict, key: str, default):
+    """``dict.get`` that also treats an explicit ``null`` as missing.
+
+    The widget ships keys with a JSON ``null`` rather than omitting them --
+    e.g. ``homeTeam`` on a fixture whose opponent is not drawn yet -- and
+    plain ``.get(key, default)`` would hand that ``None`` on to the caller.
+    """
+    value = obj.get(key)
+    return default if value is None else value
 
 
 def build_deobfuscation_map(font_bytes: bytes) -> dict[str, str]:
@@ -195,18 +208,24 @@ def fetch_venue(match_id: str, session: requests.Session) -> str | None:
     return venue or None
 
 
-def _team_name(team: dict, mapping: dict[str, str]) -> str:
-    return _strip(deobfuscate(team.get("name", ""), mapping))
+def _team_name(team: dict | None, mapping: dict[str, str]) -> str:
+    if not team:
+        return ""
+    return _strip(deobfuscate(_get(team, "name", ""), mapping))
 
 
 def parse_matches(page: dict, mapping: dict[str, str]) -> list[Fixture]:
     fixtures: list[Fixture] = []
     raw = (page.get("previousMatches") or []) + (page.get("nextMatches") or [])
     for m in raw:
-        kickoff = m.get("kickoff", {})
-        date_text = _strip(deobfuscate(kickoff.get("date", ""), mapping))
-        weekday_text = _strip(deobfuscate(kickoff.get("dateWithWeekday", ""), mapping))
-        time_text = _strip(deobfuscate(kickoff.get("time", ""), mapping))
+        if not m:
+            continue
+        kickoff = _get(m, "kickoff", {})
+        date_text = _strip(deobfuscate(_get(kickoff, "date", ""), mapping))
+        weekday_text = _strip(
+            deobfuscate(_get(kickoff, "dateWithWeekday", ""), mapping)
+        )
+        time_text = _strip(deobfuscate(_get(kickoff, "time", ""), mapping))
 
         iso_date = None
         dm = DATE_RE.search(date_text) or DATE_RE.search(weekday_text)
@@ -223,8 +242,8 @@ def parse_matches(page: dict, mapping: dict[str, str]) -> list[Fixture]:
         if "," in weekday_text:
             weekday = weekday_text.split(",", 1)[0].strip()
 
-        result = m.get("result", {})
-        score = _strip(deobfuscate(result.get("text", ""), mapping)).replace(" ", "")
+        result = _get(m, "result", {})
+        score = _strip(deobfuscate(_get(result, "text", ""), mapping)).replace(" ", "")
         score = score or None
 
         fixtures.append(
@@ -232,13 +251,15 @@ def parse_matches(page: dict, mapping: dict[str, str]) -> list[Fixture]:
                 date=iso_date,
                 time=iso_time,
                 weekday=weekday,
-                competition=_strip(deobfuscate(m.get("competitionName", ""), mapping))
+                competition=_strip(
+                    deobfuscate(_get(m, "competitionName", ""), mapping)
+                )
                 or None,
-                home=_team_name(m.get("homeTeam", {}), mapping) or None,
-                away=_team_name(m.get("guestTeam", {}), mapping) or None,
+                home=_team_name(_get(m, "homeTeam", None), mapping) or None,
+                away=_team_name(_get(m, "guestTeam", None), mapping) or None,
                 score=score,
                 status=m.get("status"),
-                match_id=m.get("id", ""),
+                match_id=_get(m, "id", ""),
             )
         )
     fixtures.sort(key=lambda f: (f.date or "9999", f.time or ""))
@@ -305,19 +326,29 @@ def write_ics(fixtures: list[Fixture], path: Path, cal_name: str) -> None:
         *VTIMEZONE,
     ]
     stamp = datetime.now(tz=ZoneInfo("UTC")).strftime("%Y%m%dT%H%M%SZ")
+    skipped = 0
+    open_opponent = 0
     for f in fixtures:
-        if not (f.date and f.home and f.away):
+        # Without a date there is nothing to put in a calendar. A missing
+        # opponent is fine: the date is already worth blocking off, and the
+        # event updates in place once the pairing is drawn (same UID).
+        if not f.date:
+            skipped += 1
             continue
         time_part = f.time or "00:00"
         start = datetime.fromisoformat(f"{f.date}T{time_part}").replace(tzinfo=TZ)
         end = start + timedelta(hours=2)
-        summary = f"{f.home} vs. {f.away}"
+        home = f.home or OPEN_OPPONENT
+        away = f.away or OPEN_OPPONENT
+        if not (f.home and f.away):
+            open_opponent += 1
+        summary = f"{home} vs. {away}"
         if f.score and f.score not in ("-:-", ":"):
             summary += f" ({f.score})"
         # Prefer the stable match id so subscribed clients update events in
         # place; fall back to a content hash when it is missing.
         uid = f.match_id or hashlib.sha1(
-            f"{f.date}|{f.home}|{f.away}".encode()
+            f"{f.date}|{home}|{away}".encode()
         ).hexdigest()[:16]
         lines += [
             "BEGIN:VEVENT",
@@ -329,11 +360,27 @@ def write_ics(fixtures: list[Fixture], path: Path, cal_name: str) -> None:
         ]
         if f.venue:
             lines.append(f"LOCATION:{_ics_escape(f.venue)}")
-        if f.competition:
-            lines.append(f"DESCRIPTION:{_ics_escape(f.competition)}")
+        # ICS folds a multi-line value onto one line with a literal \n.
+        description = [_ics_escape(f.competition)] if f.competition else []
+        if not (f.home and f.away):
+            description.append("Gegner steht noch nicht fest.")
+        if description:
+            lines.append("DESCRIPTION:" + "\\n".join(description))
         lines.append("END:VEVENT")
     lines.append("END:VCALENDAR")
     path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+    if open_opponent:
+        print(
+            f"Note: {open_opponent} of {len(fixtures)} matches have no "
+            f"opponent yet and show as \"{OPEN_OPPONENT}\" in the calendar.",
+            file=sys.stderr,
+        )
+    if skipped:
+        print(
+            f"Note: {skipped} of {len(fixtures)} matches have no date yet "
+            "and are not in the calendar.",
+            file=sys.stderr,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -372,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Fetching widget {args.key} ...", file=sys.stderr)
     page, callers = fetch_widget(args.key, session)
 
-    team = _strip(page.get("teamName", "")) or "?"
+    team = _strip(_get(page, "teamName", "")) or "?"
     print(f"Team: {team}", file=sys.stderr)
 
     font_id = page.get("obfuscatedFont")
